@@ -16,7 +16,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend import models, report, storage  # noqa: E402
+from backend import models, profiler, report, storage  # noqa: E402
 from backend.engine import make_engine  # noqa: E402
 from backend.run_manager import manager  # noqa: E402
 
@@ -98,11 +98,82 @@ def run_lifecycle() -> None:
         manager.delete_run(rid)
 
 
+def profiling_records() -> None:
+    scene = models.Scene(domain="epidemic", model="abm",
+                         config={"n": 150, "width": 200, "height": 200,
+                                 "initial_infected": 3})
+    meta = manager.create_run(scene, seed=1, snapshot_interval=2)
+    rid = meta["id"]
+    try:
+        manager.step(rid, 5)
+        data = storage.load_profile(rid)
+        assert data and len(data["records"]) == 5, "expected 5 profile records"
+        rec = data["records"][0]
+        assert rec["step"] == 1 and rec["n"] == 150, rec
+        assert rec["wall_ms"] > 0
+        stages = rec["stages"]
+        for key in ("move", "infect", "stats", "io"):
+            assert key in stages, f"missing stage {key}: {stages}"
+        # stages are a breakdown of the wall time (allow timer slack)
+        assert sum(stages.values()) <= rec["wall_ms"] * 1.5
+        assert rec["overhead_ms"] >= 0
+        assert data["calibration_ns_per_stage"] > 0
+
+        rep = profiler.build_report(data, None, None)
+        assert not rep["empty"]
+        s = rep["summary"]
+        assert s["steps"] == 5
+        assert s["slowest_stage"] in stages
+        share_sum = sum(v["share"] for v in s["stage_stats"].values())
+        assert 0.3 < share_sum <= 1.1, share_sum
+        assert len(s["slowest_steps"]) == 5
+        assert s["slowest_steps"][0]["wall_ms"] >= s["slowest_steps"][-1]["wall_ms"]
+
+        # windowed view: only steps 2..3 are summarised
+        rep2 = profiler.build_report(data, 2, 3)
+        assert rep2["range"] == {"from": 2, "to": 3}
+        assert rep2["summary"]["steps"] == 2
+        assert len(rep2["points"]) == 5, "points still cover the whole run"
+
+        # batch runs keep profiling too
+        manager.run_batch(rid, 5)
+        data2 = storage.load_profile(rid)
+        assert len(data2["records"]) == 10
+
+        # reset clears the profile
+        manager.reset(rid)
+        assert storage.load_profile(rid)["records"] == []
+    finally:
+        manager.delete_run(rid)
+
+
+def scale_probe_works() -> None:
+    scene = models.Scene(domain="traffic", model="abm", config={"n": 30})
+    meta = manager.create_run(scene, seed=1)
+    rid = meta["id"]
+    try:
+        out = profiler.scale_probe(storage.load_run_meta(rid), [1, 2], 5)
+        assert len(out["points"]) == 2
+        assert out["points"][0]["n"] == 30 and out["points"][1]["n"] == 60
+        assert all(p["mean_ms"] > 0 for p in out["points"])
+        assert out["fit"] is not None
+        # invalid factors are rejected
+        try:
+            profiler.scale_probe(storage.load_run_meta(rid), [100], 5)
+            raise AssertionError("expected ValueError for factor 100")
+        except ValueError:
+            pass
+    finally:
+        manager.delete_run(rid)
+
+
 def main() -> None:
     check("six engines step and snapshot", engines_step)
     check("interventions apply", interventions_apply)
     check("atomic sharded storage", storage_atomic_roundtrip)
     check("run lifecycle + report", run_lifecycle)
+    check("profiling records per step/stage", profiling_records)
+    check("scale probe benchmarks sizes", scale_probe_works)
     print("\nall smoke tests passed")
 
 

@@ -14,7 +14,7 @@ from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
-from . import catalog, export, models, report, storage, util
+from . import catalog, export, models, profiler, report, storage, util
 from .run_manager import manager
 
 FRONTEND_DIR = os.path.join(
@@ -239,6 +239,33 @@ def create_app() -> Flask:
             return _err(exc, 404)
         except RuntimeError as exc:
             return _err(exc, 409)
+
+    # ------------------------------------------------------------------ #
+    # Performance profiling
+    # ------------------------------------------------------------------ #
+    @app.route("/api/runs/<run_id>/profile")
+    def run_profile(run_id: str):
+        frm = request.args.get("from", type=int)
+        to = request.args.get("to", type=int)
+        try:
+            data = manager.get_profile(run_id)
+        except KeyError as exc:
+            return _err(exc, 404)
+        return jsonify(profiler.build_report(data or {}, frm, to))
+
+    @app.route("/api/runs/<run_id>/profile/scale-probe", methods=["POST"])
+    def run_scale_probe(run_id: str):
+        meta = storage.load_run_meta(run_id)
+        if meta is None:
+            return _err(KeyError(f"run not found: {run_id}"), 404)
+        data = _json()
+        try:
+            result = profiler.scale_probe(
+                meta, factors=data.get("factors"),
+                steps=int(data.get("steps", 30)))
+        except ValueError as exc:
+            return _err(exc, 400)
+        return jsonify(result)
 
     # ------------------------------------------------------------------ #
     # Experiments (comparison of parameter groups)

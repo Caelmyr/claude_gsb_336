@@ -62,6 +62,9 @@ class EcologyABM(Engine):
     def individuals(self) -> List[Dict[str, Any]]:
         return self.boids + self.predators
 
+    def population(self) -> int:
+        return len(self.boids) + len(self.predators)
+
     def _delta(self, ax: float, ay: float, bx: float, by: float) -> Tuple[float, float]:
         dx = (ax - bx + self.width / 2) % self.width - self.width / 2
         dy = (ay - by + self.height / 2) % self.height - self.height / 2
@@ -105,85 +108,88 @@ class EcologyABM(Engine):
         flee = float(self.config["flee_radius"])
         boids = self.boids
         preds = self.predators
-        grid = self._build_hash()
+        with self._stage("hash"):
+            grid = self._build_hash()
 
-        total_neighbors = 0
-        for i, b in enumerate(boids):
-            neigh = self._nearby(grid, b["x"], b["y"], perc, skip=i)
-            total_neighbors += len(neigh)
-            if neigh:
-                n = len(neigh)
-                ax = sum(boids[j]["vx"] for j, _ in neigh) / n
-                ay = sum(boids[j]["vy"] for j, _ in neigh) / n
-                cx = sum(boids[j]["x"] for j, _ in neigh) / n
-                cy = sum(boids[j]["y"] for j, _ in neigh) / n
-                cohx, cohy = self._delta(cx, cy, b["x"], b["y"])
-                cl = math.hypot(cohx, cohy)
-                if cl > 1e-9:
-                    cohx, cohy = cohx / cl, cohy / cl
-                sx = sy = 0.0
+        with self._stage("flock"):
+            total_neighbors = 0
+            for i, b in enumerate(boids):
+                neigh = self._nearby(grid, b["x"], b["y"], perc, skip=i)
+                total_neighbors += len(neigh)
+                if neigh:
+                    n = len(neigh)
+                    ax = sum(boids[j]["vx"] for j, _ in neigh) / n
+                    ay = sum(boids[j]["vy"] for j, _ in neigh) / n
+                    cx = sum(boids[j]["x"] for j, _ in neigh) / n
+                    cy = sum(boids[j]["y"] for j, _ in neigh) / n
+                    cohx, cohy = self._delta(cx, cy, b["x"], b["y"])
+                    cl = math.hypot(cohx, cohy)
+                    if cl > 1e-9:
+                        cohx, cohy = cohx / cl, cohy / cl
+                    sx = sy = 0.0
+                    cnt = 0
+                    for j, d in neigh:
+                        if 0 < d < sep:
+                            ox, oy = self._delta(b["x"], b["y"], boids[j]["x"], boids[j]["y"])
+                            ol = math.hypot(ox, oy) or 1.0
+                            sx += ox / ol
+                            sy += oy / ol
+                            cnt += 1
+                    if cnt:
+                        sx /= cnt
+                        sy /= cnt
+                else:
+                    ax, ay = b["vx"], b["vy"]
+                    cohx = cohy = sx = sy = 0.0
+
+                # Flee predators.
+                fx = fy = 0.0
                 cnt = 0
-                for j, d in neigh:
-                    if 0 < d < sep:
-                        ox, oy = self._delta(b["x"], b["y"], boids[j]["x"], boids[j]["y"])
-                        ol = math.hypot(ox, oy) or 1.0
-                        sx += ox / ol
-                        sy += oy / ol
+                for p in preds:
+                    ox, oy = self._delta(b["x"], b["y"], p["x"], p["y"])
+                    d = math.hypot(ox, oy)
+                    if 0 < d < flee:
+                        fx += ox / d
+                        fy += oy / d
                         cnt += 1
                 if cnt:
-                    sx /= cnt
-                    sy /= cnt
-            else:
-                ax, ay = b["vx"], b["vy"]
-                cohx = cohy = sx = sy = 0.0
+                    fx /= cnt
+                    fy /= cnt
 
-            # Flee predators.
-            fx = fy = 0.0
-            cnt = 0
-            for p in preds:
-                ox, oy = self._delta(b["x"], b["y"], p["x"], p["y"])
-                d = math.hypot(ox, oy)
-                if 0 < d < flee:
-                    fx += ox / d
-                    fy += oy / d
-                    cnt += 1
-            if cnt:
-                fx /= cnt
-                fy /= cnt
-
-            dvx = 1.0 * ax + 0.05 * maxv * cohx + 1.0 * maxv * sx + 3.0 * maxv * fx
-            dvy = 1.0 * ay + 0.05 * maxv * cohy + 1.0 * maxv * sy + 3.0 * maxv * fy
-            dvx, dvy = _clamp(dvx, dvy, maxv)
-            b["vx"] += 0.15 * (dvx - b["vx"])
-            b["vy"] += 0.15 * (dvy - b["vy"])
-            b["vx"], b["vy"] = _clamp(b["vx"], b["vy"], maxv)
-            b["x"] = (b["x"] + b["vx"]) % w
-            b["y"] = (b["y"] + b["vy"]) % h
+                dvx = 1.0 * ax + 0.05 * maxv * cohx + 1.0 * maxv * sx + 3.0 * maxv * fx
+                dvy = 1.0 * ay + 0.05 * maxv * cohy + 1.0 * maxv * sy + 3.0 * maxv * fy
+                dvx, dvy = _clamp(dvx, dvy, maxv)
+                b["vx"] += 0.15 * (dvx - b["vx"])
+                b["vy"] += 0.15 * (dvy - b["vy"])
+                b["vx"], b["vy"] = _clamp(b["vx"], b["vy"], maxv)
+                b["x"] = (b["x"] + b["vx"]) % w
+                b["y"] = (b["y"] + b["vy"]) % h
 
         # Predators chase the nearest bird (wrap-aware shortest path).
-        eaten: set = set()
-        for p in preds:
-            best = -1
-            bestd = float("inf")
-            for j, b in enumerate(boids):
+        with self._stage("predator"):
+            eaten: set = set()
+            for p in preds:
+                best = -1
+                bestd = float("inf")
+                for j, b in enumerate(boids):
+                    ox, oy = self._delta(b["x"], b["y"], p["x"], p["y"])
+                    d = math.hypot(ox, oy)
+                    if d < bestd:
+                        bestd, best = d, j
+                if best < 0:
+                    continue
+                b = boids[best]
                 ox, oy = self._delta(b["x"], b["y"], p["x"], p["y"])
                 d = math.hypot(ox, oy)
-                if d < bestd:
-                    bestd, best = d, j
-            if best < 0:
-                continue
-            b = boids[best]
-            ox, oy = self._delta(b["x"], b["y"], p["x"], p["y"])
-            d = math.hypot(ox, oy)
-            if d < 4.0:
-                eaten.add(best)
-                self._eaten += 1
-            else:
-                p["x"] = (p["x"] + ox / d * pv) % w
-                p["y"] = (p["y"] + oy / d * pv) % h
+                if d < 4.0:
+                    eaten.add(best)
+                    self._eaten += 1
+                else:
+                    p["x"] = (p["x"] + ox / d * pv) % w
+                    p["y"] = (p["y"] + oy / d * pv) % h
 
-        if eaten:
-            self.boids = [b for j, b in enumerate(boids) if j not in eaten]
+            if eaten:
+                self.boids = [b for j, b in enumerate(boids) if j not in eaten]
 
         self._last_mean_neighbors = total_neighbors / len(boids) if boids else 0.0
         self.step_count += 1

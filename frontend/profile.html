@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>性能剖析 · 复杂系统模拟仿真平台</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="topnav" id="topnav"></nav>
+  <main class="container">
+    <h1 class="page-title">性能剖析</h1>
+    <p class="page-sub">按时间步测量各计算阶段（移动、感染检测、统计聚合、序列化、写盘……）的耗时，定位最慢环节，并预判规模增长带来的瓶颈。</p>
+
+    <div class="card">
+      <div class="row between">
+        <div class="row">
+          <select id="runSelect" style="max-width:420px"></select>
+          <button class="btn primary small" id="loadBtn">加载</button>
+        </div>
+        <div class="row gap-6">
+          <label class="muted small">步区间</label>
+          <input id="fromStep" type="number" style="width:90px" placeholder="起">
+          <span class="muted">—</span>
+          <input id="toStep" type="number" style="width:90px" placeholder="止">
+          <button class="btn small" id="applyRange">应用区间</button>
+          <button class="btn small" id="fullRange">全程</button>
+        </div>
+      </div>
+      <p class="muted small" style="margin:8px 0 0">提示：在下方堆叠图上滚轮缩放、框选或拖动滑块，区间会自动同步；所有占比、最慢步与异常检测都按当前区间重新计算，而不是只看全程平均值。</p>
+    </div>
+
+    <div class="notice" id="emptyNotice" style="display:none"></div>
+
+    <div id="content" style="display:none">
+      <div class="grid grid-3" id="kpis"></div>
+
+      <div class="card">
+        <h2>各阶段耗时随时间步变化（堆叠）</h2>
+        <div class="chart" id="stageChart" style="height:400px"></div>
+        <p class="muted small" id="bucketNote"></p>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>阶段占比（当前区间）</h2>
+          <div class="chart" id="shareChart" style="height:320px"></div>
+        </div>
+        <div class="card">
+          <h2>阶段明细（当前区间）</h2>
+          <table id="stageTable"></table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>最慢的时间步（当前区间 Top 10）</h2>
+        <p class="muted small" id="spikeNote"></p>
+        <table id="slowTable"></table>
+        <p class="muted small">点击某一行可将堆叠图缩放到该步附近，查看当时各阶段的变化。</p>
+      </div>
+
+      <div class="card">
+        <h2>规模趋势与预测</h2>
+        <div class="grid grid-2">
+          <div>
+            <h3>本次运行：每步耗时 vs 个体规模</h3>
+            <div class="chart" id="scaleChart" style="height:300px"></div>
+            <div class="row" style="margin-top:8px">
+              <label class="muted small">若规模扩大到</label>
+              <input id="estInput" type="number" style="width:130px" placeholder="个体数">
+              <span class="pill" id="estOut"></span>
+            </div>
+            <p class="muted small" id="scaleNote"></p>
+          </div>
+          <div>
+            <h3>规模探针：多档规模实测</h3>
+            <div class="row gap-6" style="margin-bottom:8px">
+              <input id="probeFactors" style="max-width:180px" value="0.5,1,2,4" title="规模因子，逗号分隔">
+              <input id="probeSteps" type="number" style="width:80px" value="30" title="每档计时的步数">
+              <button class="btn small" id="probeBtn">运行探针</button>
+            </div>
+            <div class="chart" id="probeChart" style="height:264px"></div>
+            <p class="muted small" id="probeNote">以相同配置新建临时引擎，在各规模档位下实测 engine.step() 核心计算耗时（不含写盘），用于在扩大规模前预判瓶颈。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>测量开销与可信度</h2>
+        <div id="overheadBody"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/vendor/echarts.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/profile.js"></script>
+</body>
+</html>

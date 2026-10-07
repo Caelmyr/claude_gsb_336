@@ -19,11 +19,13 @@ from typing import Any, Dict, List, Optional
 from . import models, storage, util
 from .engine import make_engine
 from .engine.base import Engine
+from .profiler import StepProfiler
 
 
 class RunManager:
     def __init__(self) -> None:
         self._engines: Dict[str, Engine] = {}
+        self._profilers: Dict[str, StepProfiler] = {}
         self._locks: Dict[str, threading.RLock] = {}
         self._abort: set = set()
         self._lock = threading.RLock()
@@ -45,6 +47,18 @@ class RunManager:
         if meta is None:
             raise KeyError(f"run not found: {run_id}")
         return eng, meta
+
+    def _profiler_for(self, run_id: str,
+                      engine: Optional[Engine] = None) -> StepProfiler:
+        """Return (lazily creating) the profiler attached to a run."""
+        with self._lock:
+            prof = self._profilers.get(run_id)
+            if prof is None:
+                prof = StepProfiler()
+                self._profilers[run_id] = prof
+        if engine is not None:
+            engine.profiler = prof
+        return prof
 
     # ------------------------------------------------------------------ #
     # Create
@@ -83,6 +97,7 @@ class RunManager:
         storage.save_run_meta(meta)
         with self._lock:
             self._engines[run_id] = engine
+        self._profiler_for(run_id, engine)
         return meta
 
     # ------------------------------------------------------------------ #
@@ -115,15 +130,31 @@ class RunManager:
                 raise RuntimeError("该运行未载入内存（服务器重启后不可续跑），请重开新运行")
             if meta["status"] in ("finished", "stopped"):
                 meta["status"] = "ready"
+            prof = self._profiler_for(run_id, engine)
             for _ in range(int(n)):
-                self._apply_due(run_id, engine, meta, engine.step_count)
-                engine.step()
-                meta["current_step"] = engine.step_count
-                meta["updated_at"] = util.now_iso()
-                storage.append_series(run_id, {"step": engine.step_count,
-                                               **engine.stats()})
-                if engine.step_count % meta["snapshot_interval"] == 0:
-                    storage.save_step(run_id, engine.step_count, engine.snapshot())
+                with prof.track(engine.step_count + 1, engine.population()):
+                    with prof.stage("intervention"):
+                        self._apply_due(run_id, engine, meta, engine.step_count)
+                    engine.step()
+                    meta["current_step"] = engine.step_count
+                    meta["updated_at"] = util.now_iso()
+                    with prof.stage("stats"):
+                        stats = engine.stats()
+                    with prof.stage("io"):
+                        storage.append_series(
+                            run_id, {"step": engine.step_count, **stats})
+                    if engine.step_count % meta["snapshot_interval"] == 0:
+                        with prof.stage("serialize"):
+                            snap = engine.snapshot()
+                        with prof.stage("io"):
+                            storage.save_step(run_id, engine.step_count, snap)
+                if prof.should_flush():
+                    # Flush between steps so the write never lands inside a
+                    # step's own timing window.
+                    storage.save_profile(run_id, prof.to_dict())
+                    prof.mark_flushed()
+            storage.save_profile(run_id, prof.to_dict())
+            prof.mark_flushed()
             storage.save_run_meta(meta)
             return {"step": engine.step_count, "stats": engine.stats(),
                     "snapshot": engine.snapshot()}
@@ -147,24 +178,37 @@ class RunManager:
             storage.save_run_meta(meta)
 
             series = storage.load_series(run_id)
+            prof = self._profiler_for(run_id, engine)
             self._abort.discard(run_id)
             for _ in range(int(steps)):
                 if run_id in self._abort:
                     break
-                self._apply_due(run_id, engine, meta, engine.step_count)
-                engine.step()
-                meta["current_step"] = engine.step_count
-                series.append({"step": engine.step_count, **engine.stats()})
-                if engine.step_count % meta["snapshot_interval"] == 0:
-                    storage.save_step(run_id, engine.step_count, engine.snapshot())
+                with prof.track(engine.step_count + 1, engine.population()):
+                    with prof.stage("intervention"):
+                        self._apply_due(run_id, engine, meta, engine.step_count)
+                    engine.step()
+                    meta["current_step"] = engine.step_count
+                    with prof.stage("stats"):
+                        stats = engine.stats()
+                    series.append({"step": engine.step_count, **stats})
+                    if engine.step_count % meta["snapshot_interval"] == 0:
+                        with prof.stage("serialize"):
+                            snap = engine.snapshot()
+                        with prof.stage("io"):
+                            storage.save_step(run_id, engine.step_count, snap)
                 if engine.step_count % 50 == 0:
                     storage.save_series(run_id, series)
+                    if prof.should_flush():
+                        storage.save_profile(run_id, prof.to_dict())
+                        prof.mark_flushed()
                     meta["updated_at"] = util.now_iso()
                     storage.save_run_meta(meta)
 
             meta["status"] = "stopped" if run_id in self._abort else "finished"
             meta["updated_at"] = util.now_iso()
             storage.save_series(run_id, series)
+            storage.save_profile(run_id, prof.to_dict())
+            prof.mark_flushed()
             storage.save_run_meta(meta)
             self._abort.discard(run_id)
 
@@ -172,6 +216,9 @@ class RunManager:
             if not keep_engine:
                 with self._lock:
                     self._engines.pop(run_id, None)
+                    # The profile is on disk now; drop the in-memory copy to
+                    # bound memory for experiment batch runs.
+                    self._profilers.pop(run_id, None)
             return {"step": engine.step_count, "stats": engine.stats(),
                     "snapshot": final}
 
@@ -220,6 +267,12 @@ class RunManager:
             storage.save_step(run_id, 0, engine.snapshot())
             storage.save_series(run_id, [{"step": 0, **engine.stats()}])
             storage.save_events(run_id, [])
+            # Profiling starts over together with the run.
+            prof = StepProfiler()
+            engine.profiler = prof
+            with self._lock:
+                self._profilers[run_id] = prof
+            storage.save_profile(run_id, prof.to_dict())
             storage.save_run_meta(meta)
             return meta
 
@@ -227,6 +280,7 @@ class RunManager:
         with self._lock_for(run_id):
             with self._lock:
                 self._engines.pop(run_id, None)
+                self._profilers.pop(run_id, None)
                 self._locks.pop(run_id, None)
                 self._abort.discard(run_id)
             return storage.delete_run(run_id)
@@ -286,6 +340,17 @@ class RunManager:
 
     def get_individuals(self, run_id: str, step: Optional[int] = None) -> List[Dict[str, Any]]:
         return self.get_snapshot(run_id, step).get("individuals", [])
+
+    def get_profile(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Profiler data for a run: fresh in-memory copy if the run is active
+        in this process, otherwise the last flush persisted on disk."""
+        with self._lock_for(run_id):
+            self._require(run_id)
+            with self._lock:
+                prof = self._profilers.get(run_id)
+            if prof is not None and prof.records:
+                return prof.to_dict()
+        return storage.load_profile(run_id)
 
 
 # Global singleton used by the Flask app.

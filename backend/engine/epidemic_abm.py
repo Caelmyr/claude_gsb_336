@@ -72,6 +72,9 @@ class EpidemicABM(Engine):
     def individuals(self) -> List[Dict[str, Any]]:
         return self.agents
 
+    def population(self) -> int:
+        return len(self.agents)
+
     def _delta(self, ax: float, ay: float, bx: float, by: float) -> Tuple[float, float]:
         dx = (ax - bx + self.width / 2) % self.width - self.width / 2
         dy = (ay - by + self.height / 2) % self.height - self.height / 2
@@ -101,45 +104,48 @@ class EpidemicABM(Engine):
         radius = self._base_radius * self._f_dist
         agents = self.agents
 
-        self._move(speed)
+        with self._stage("move"):
+            self._move(speed)
 
         # 1. Recovery (current infected only — the infection pass runs after).
-        for a in agents:
-            if a["state"] == "infected":
-                a["days"] += 1
-                if self._coin(gamma):
-                    a["state"] = "recovered"
+        with self._stage("recover"):
+            for a in agents:
+                if a["state"] == "infected":
+                    a["days"] += 1
+                    if self._coin(gamma):
+                        a["state"] = "recovered"
 
         # 2. Infection via spatial-hash contact detection.
-        cell = max(radius, 1.0)
-        grid: Dict[Tuple[int, int], List[int]] = {}
-        for i, a in enumerate(agents):
-            if a["state"] == "infected":
-                key = (int(a["x"] // cell), int(a["y"] // cell))
-                grid.setdefault(key, []).append(i)
+        with self._stage("infect"):
+            cell = max(radius, 1.0)
+            grid: Dict[Tuple[int, int], List[int]] = {}
+            for i, a in enumerate(agents):
+                if a["state"] == "infected":
+                    key = (int(a["x"] // cell), int(a["y"] // cell))
+                    grid.setdefault(key, []).append(i)
 
-        new_inf = 0
-        for a in agents:
-            if a["state"] != "susceptible":
-                continue
-            cx, cy = int(a["x"] // cell), int(a["y"] // cell)
-            hit = False
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    for j in grid.get((cx + dx, cy + dy), ()):
-                        inf = agents[j]
-                        ox, oy = self._delta(a["x"], a["y"], inf["x"], inf["y"])
-                        if math.hypot(ox, oy) < radius:
-                            hit = True
+            new_inf = 0
+            for a in agents:
+                if a["state"] != "susceptible":
+                    continue
+                cx, cy = int(a["x"] // cell), int(a["y"] // cell)
+                hit = False
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        for j in grid.get((cx + dx, cy + dy), ()):
+                            inf = agents[j]
+                            ox, oy = self._delta(a["x"], a["y"], inf["x"], inf["y"])
+                            if math.hypot(ox, oy) < radius:
+                                hit = True
+                                break
+                        if hit:
                             break
                     if hit:
                         break
-                if hit:
-                    break
-            if hit and self._coin(beta):
-                a["state"] = "infected"
-                a["days"] = 0
-                new_inf += 1
+                if hit and self._coin(beta):
+                    a["state"] = "infected"
+                    a["days"] = 0
+                    new_inf += 1
 
         self._last_new = new_inf
         self.step_count += 1

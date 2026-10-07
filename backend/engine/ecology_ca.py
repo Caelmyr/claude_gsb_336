@@ -106,29 +106,32 @@ class EcologyCA(Engine):
         gg = float(self.config["grass_growth"])
 
         # 1. Grass grows on empty cells.
-        for y in range(h):
-            row_occ, row_grass = self.occ[y], self.grass[y]
-            for x in range(w):
-                if row_occ[x] == -1 and not row_grass[x] and self._coin(gg):
-                    row_grass[x] = True
+        with self._stage("grass"):
+            for y in range(h):
+                row_occ, row_grass = self.occ[y], self.grass[y]
+                for x in range(w):
+                    if row_occ[x] == -1 and not row_grass[x] and self._coin(gg):
+                        row_grass[x] = True
 
         # 2. Animals act in a random order to avoid update-order bias.
-        order = list(range(len(self.animals)))
-        self.rng.shuffle(order)
-        dead: set = set()
-        for idx in order:
-            if idx in dead:
-                continue
-            a = self.animals[idx]
-            if a["type"] == "rabbit":
-                self._rabbit_step(idx, dead)
-            else:
-                self._fox_step(idx, dead)
+        with self._stage("animals"):
+            order = list(range(len(self.animals)))
+            self.rng.shuffle(order)
+            dead: set = set()
+            for idx in order:
+                if idx in dead:
+                    continue
+                a = self.animals[idx]
+                if a["type"] == "rabbit":
+                    self._rabbit_step(idx, dead)
+                else:
+                    self._fox_step(idx, dead)
 
-        if dead:
-            self.animals = [a for i, a in enumerate(self.animals)
-                            if i not in dead]
-        self._rebuild_occ()
+            if dead:
+                self.animals = [a for i, a in enumerate(self.animals)
+                                if i not in dead]
+        with self._stage("rebuild"):
+            self._rebuild_occ()
         self.step_count += 1
 
     def _rabbit_step(self, idx: int, dead: set) -> None:
@@ -191,6 +194,9 @@ class EcologyCA(Engine):
     # ------------------------------------------------------------------ #
     def individuals(self) -> List[Dict[str, Any]]:
         return self.animals
+
+    def population(self) -> int:
+        return len(self.animals)
 
     def stats(self) -> Dict[str, Any]:
         rabbits = sum(1 for a in self.animals if a["type"] == "rabbit")

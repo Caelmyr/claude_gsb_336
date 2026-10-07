@@ -10,6 +10,7 @@ Layout (all under :data:`DATA_DIR`)::
           events.json               # applied intervention log
           steps/<nnnnnnnn>.json     # full per-step snapshot (individuals + grid)
           report.json               # generated report
+          profile.json              # per-step / per-stage timing records
       experiments/<exp_id>.json     # comparison experiments (param groups)
       exports/                      # exported CSV / JSON files
 
@@ -152,6 +153,10 @@ def run_report_path(run_id: str) -> str:
     return os.path.join(run_dir(run_id), "report.json")
 
 
+def run_profile_path(run_id: str) -> str:
+    return os.path.join(run_dir(run_id), "profile.json")
+
+
 def run_steps_dir(run_id: str) -> str:
     return os.path.join(run_dir(run_id), "steps")
 
@@ -252,6 +257,15 @@ def save_report(run_id: str, report: Dict[str, Any]) -> None:
 
 def load_report(run_id: str) -> Optional[Dict[str, Any]]:
     return read_json(run_report_path(run_id))
+
+
+def save_profile(run_id: str, profile: Dict[str, Any]) -> None:
+    """Persist the profiler's per-step timing records for a run."""
+    atomic_write_json(run_profile_path(run_id), profile)
+
+
+def load_profile(run_id: str) -> Optional[Dict[str, Any]]:
+    return read_json(run_profile_path(run_id))
 
 
 # --------------------------------------------------------------------------- #

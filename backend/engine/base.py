@@ -17,6 +17,7 @@ colors so the frontend can render any domain without domain-specific logic.
 
 from __future__ import annotations
 
+import contextlib
 import random
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,10 @@ from typing import Any, Dict, List, Optional
 class Engine(ABC):
     domain: str = ""
     model: str = ""
+
+    # Attached by the run manager when profiling; None for bare engines
+    # (tests, scale probes, REPL), in which case ``_stage()`` is a no-op.
+    profiler = None
 
     def __init__(self, config: Optional[Dict[str, Any]] = None,
                  seed: Optional[int] = None) -> None:
@@ -60,6 +65,28 @@ class Engine(ABC):
     # ------------------------------------------------------------------ #
     def individuals(self) -> List[Dict[str, Any]]:
         return self._individuals
+
+    def population(self) -> int:
+        """Cheap individual count used by the profiler.
+
+        Unlike ``individuals()`` this must never build the serialisable list
+        (some CA engines materialise one dict per cell on demand).
+        """
+        return len(self._individuals)
+
+    # ------------------------------------------------------------------ #
+    # Profiling
+    # ------------------------------------------------------------------ #
+    def _stage(self, name: str):
+        """Time a named phase of ``step()`` when a profiler is attached.
+
+        Returns a no-op context manager otherwise, so instrumented code runs
+        identically (and at full speed) with or without profiling.
+        """
+        prof = self.profiler
+        if prof is None:
+            return contextlib.nullcontext()
+        return prof.stage(name)
 
     def bounds(self) -> Dict[str, float]:
         """World extent ``{"width", "height"}`` used to scale the canvas."""
