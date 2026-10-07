@@ -28,6 +28,7 @@ function renderRuns() {
         <a class="btn small" href="/visualize.html?run=${esc(r.id)}">可视化</a>
         <a class="btn small" href="/replay.html?run=${esc(r.id)}">回放</a>
         <a class="btn small" href="/stats.html?run=${esc(r.id)}">统计</a>
+        <a class="btn small" href="/profile.html?run=${esc(r.id)}">剖析</a>
         <a class="btn small" href="/report.html?run=${esc(r.id)}">报告</a>
         <button class="btn danger small del" data-kind="runs" data-id="${esc(r.id)}">删除</button>
       </div>

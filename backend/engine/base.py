@@ -18,7 +18,9 @@ colors so the frontend can render any domain without domain-specific logic.
 from __future__ import annotations
 
 import random
+import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
 
@@ -33,6 +35,11 @@ class Engine(ABC):
         self.rng: random.Random = random.Random(seed)
         self.step_count: int = 0
         self._individuals: List[Dict[str, Any]] = []
+        # Profiling hooks, driven by the run manager.  Disabled profiling
+        # costs a single attribute check per ``_timed`` block.
+        self.profiling: bool = False
+        self._phase_times: Dict[str, float] = {}
+        self._phase_blocks: int = 0
         self._init()
 
     # ------------------------------------------------------------------ #
@@ -85,6 +92,39 @@ class Engine(ABC):
         Returns a result dict ``{"applied": bool, "reason": str}``.
         """
         return {"applied": False, "reason": f"{self.domain}/{self.model} 不支持该干预"}
+
+    # ------------------------------------------------------------------ #
+    # Profiling
+    # ------------------------------------------------------------------ #
+    @contextmanager
+    def _timed(self, phase: str):
+        """Accumulate wall time (ms) for a named phase of ``step()``.
+
+        Engines wrap the major computation blocks of their ``step()`` in
+        these markers; the run manager collects them after each step via
+        :meth:`pop_phase_times`.  When ``self.profiling`` is off the block
+        runs untimed and costs only the attribute check.
+        """
+        if not self.profiling:
+            yield
+            return
+        t = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._phase_times[phase] = self._phase_times.get(phase, 0.0) + \
+                (time.perf_counter() - t) * 1000.0
+            self._phase_blocks += 1
+
+    def pop_phase_times(self) -> tuple:
+        """Return and reset accumulated ``(phase -> ms, block count)``."""
+        out, self._phase_times = self._phase_times, {}
+        blocks, self._phase_blocks = self._phase_blocks, 0
+        return out, blocks
+
+    def population(self) -> int:
+        """Current number of simulated individuals (cheap, no materialisation)."""
+        return len(self._individuals)
 
     # ------------------------------------------------------------------ #
     # Serialisation

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>性能剖析 · 复杂系统模拟仿真平台</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="topnav" id="topnav"></nav>
+  <main class="container">
+    <h1 class="page-title">性能剖析</h1>
+    <p class="page-sub">按时间步 × 计算阶段测量耗时：统计各阶段占比、定位最慢环节，观察不同步段的耗时变化，评估测量开销，并在扩大规模前预判瓶颈。</p>
+
+    <div class="card">
+      <div class="row between">
+        <div class="row">
+          <select id="runSelect" style="max-width:380px"></select>
+          <button class="btn small" id="refreshBtn">刷新</button>
+        </div>
+        <div class="row gap-6">
+          <label class="check small"><input type="checkbox" id="profToggle"> 剖析开关</label>
+          <span class="muted small" id="profState"></span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="muted small">步区间</span>
+        <input type="number" id="fromStep" style="width:100px" placeholder="起始">
+        <span class="muted small">至</span>
+        <input type="number" id="toStep" style="width:100px" placeholder="结束">
+        <span class="muted small">分桶</span>
+        <select id="bucketSel" style="width:90px">
+          <option value="30">30</option>
+          <option value="60" selected>60</option>
+          <option value="120">120</option>
+          <option value="240">240</option>
+        </select>
+        <button class="btn primary small" id="analyseBtn">分析</button>
+        <span class="muted small" id="rangeHint"></span>
+      </div>
+    </div>
+
+    <div id="emptyNotice" class="notice" style="display:none"></div>
+
+    <div id="profileBody" style="display:none">
+      <div class="grid grid-4" id="kpis"></div>
+
+      <div class="card">
+        <h2>各阶段耗时随时间步变化</h2>
+        <p class="muted small" style="margin:0 0 10px">堆叠区域为各阶段在每段连续步上的平均耗时（悬停查看明细，底部滑块可缩放）；虚线为每步总耗时。未开启剖析的步段只显示总耗时线。</p>
+        <div class="chart" id="phaseChart"></div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>阶段占比（所选区间平均）</h2>
+          <div class="chart" id="shareChart"></div>
+        </div>
+        <div class="card">
+          <h2>最慢时间步 Top 5</h2>
+          <p class="muted small" style="margin:0 0 10px">定位「哪一步突然变慢」及其主导阶段。</p>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th class="num">步</th><th class="num">总耗时 (ms)</th><th>主导阶段</th><th class="num">该阶段 (ms)</th></tr></thead>
+            <tbody id="slowBody"></tbody>
+          </table></div>
+          <h3 style="margin-top:16px">阶段明细（区间平均 / 峰值）</h3>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th>阶段</th><th class="num">平均 (ms)</th><th class="num">占比</th><th class="num">峰值 (ms)</th><th class="num">峰值步</th></tr></thead>
+            <tbody id="phaseBody"></tbody>
+          </table></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>每步耗时随个体规模变化</h2>
+        <div class="chart" id="scaleChart"></div>
+        <p class="muted small" id="scaleFit" style="margin:10px 0 0"></p>
+      </div>
+
+      <div class="card">
+        <h2>规模探针 —— 在扩大规模前预判瓶颈</h2>
+        <p class="muted small" style="margin:0 0 10px">用当前运行的配置，在临时引擎上按不同规模倍率试跑若干步（仅测纯计算，不写盘、不影响本运行），看每步耗时与哪个阶段随规模增长最快。</p>
+        <div class="row">
+          <span class="muted small">规模倍率</span>
+          <input id="probeScales" value="0.5,1,2,4" style="width:180px">
+          <span class="muted small">每档步数</span>
+          <input id="probeSteps" type="number" value="30" style="width:80px" min="1" max="200">
+          <button class="btn small" id="probeBtn">运行探针</button>
+          <span class="muted small" id="probeStatus"></span>
+        </div>
+        <div class="chart" id="probeChart" style="display:none"></div>
+        <p class="muted small" id="probeSummary" style="margin:10px 0 0"></p>
+      </div>
+
+      <div class="card">
+        <h2>测量开销与结果可信度</h2>
+        <div id="overheadBody"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/vendor/echarts.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/profile.js"></script>
+</body>
+</html>

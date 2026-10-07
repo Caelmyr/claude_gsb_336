@@ -6,6 +6,7 @@ const PAGES = [
   { file: "individuals.html", label: "个体管理" },
   { file: "visualize.html", label: "实时可视化" },
   { file: "stats.html", label: "统计图表" },
+  { file: "profile.html", label: "性能剖析" },
   { file: "intervention.html", label: "干预措施" },
   { file: "replay.html", label: "回放与时间轴" },
   { file: "compare.html", label: "对比实验" },

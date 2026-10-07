@@ -98,11 +98,68 @@ def run_lifecycle() -> None:
         manager.delete_run(rid)
 
 
+def profiling_lifecycle() -> None:
+    scene = models.Scene(domain="epidemic", model="abm",
+                         config={"n": 300, "width": 300, "height": 300,
+                                 "initial_infected": 5})
+    meta = manager.create_run(scene, seed=7, snapshot_interval=2)
+    rid = meta["id"]
+    try:
+        manager.step(rid, 3)                       # interactive path, profiled
+        manager.set_profiling(rid, False)
+        manager.step(rid, 2)                       # totals only
+        manager.set_profiling(rid, True)
+        manager.run_batch(rid, 10, keep_engine=True)   # batch path, profiled
+
+        prof = storage.load_profile(rid)
+        rows = prof["rows"]
+        assert len(rows) == 15, len(rows)
+        assert all("phases" in r for r in rows[:3])
+        assert all("phases" not in r for r in rows[3:5])
+        assert all("phases" in r for r in rows[5:])
+        phases = rows[-1]["phases"]
+        for key in ("move", "infect", "stats"):
+            assert key in phases, phases
+        assert all(r["total_ms"] >= 0 for r in rows)
+        assert all(r["n"] == 300 for r in rows)
+
+        res = manager.get_profile(rid)
+        assert not res["empty"]
+        s = res["summary"]
+        assert s["steps_in_range"] == 15 and s["profiled_steps"] == 13
+        assert s["unprofiled_steps"] == 2
+        assert s["per_phase"] and s["slowest_phase"]
+        assert len(s["slowest_steps"]) == 5
+        assert res["buckets"] and res["overhead"]["estimated_overhead_pct"] >= 0
+        assert res["overhead"]["measured"] is not None  # has on/off segments
+        shares = sum(p["share"] for p in s["per_phase"])
+        assert 0.9 <= shares <= 1.1, shares
+
+        # Step-range selection narrows the summary to profiled steps only.
+        res2 = manager.get_profile(rid, frm=6, to=15)
+        assert res2["summary"]["steps_in_range"] == 10
+        assert res2["summary"]["profiled_steps"] == 10
+
+        # Scale probe grows the population and reports per-phase means.
+        probe = manager.run_scale_probe(rid, factors=[1, 2], steps=5)
+        assert len(probe["points"]) == 2
+        assert probe["points"][1]["n"] > probe["points"][0]["n"]
+        assert probe["points"][0]["mean_total_ms"] > 0
+        assert probe["points"][0]["phases"]
+
+        # Reset clears the profiling rows like it clears series/events.
+        manager.reset(rid)
+        assert storage.load_profile(rid)["rows"] == []
+    finally:
+        manager.delete_run(rid)
+
+
 def main() -> None:
     check("six engines step and snapshot", engines_step)
     check("interventions apply", interventions_apply)
     check("atomic sharded storage", storage_atomic_roundtrip)
     check("run lifecycle + report", run_lifecycle)
+    check("profiling lifecycle + analysis + probe", profiling_lifecycle)
     print("\nall smoke tests passed")
 
 

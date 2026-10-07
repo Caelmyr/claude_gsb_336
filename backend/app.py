@@ -131,7 +131,8 @@ def create_app() -> Flask:
             meta = manager.create_run(
                 scene_obj, name=data.get("name"),
                 seed=data.get("seed"),
-                snapshot_interval=int(data.get("snapshot_interval", 1)))
+                snapshot_interval=int(data.get("snapshot_interval", 1)),
+                profile=bool(data.get("profile", True)))
         except Exception as exc:  # noqa: BLE001
             return _err(exc, 500)
         return jsonify(meta), 201
@@ -239,6 +240,43 @@ def create_app() -> Flask:
             return _err(exc, 404)
         except RuntimeError as exc:
             return _err(exc, 409)
+
+    # ------------------------------------------------------------------ #
+    # Profiling (per-step × per-phase timing)
+    # ------------------------------------------------------------------ #
+    @app.route("/api/runs/<run_id>/profile")
+    def run_profile(run_id: str):
+        frm = request.args.get("from", type=int)
+        to = request.args.get("to", type=int)
+        buckets = request.args.get("buckets", 60, type=int)
+        scale_bins = request.args.get("scale_bins", 12, type=int)
+        try:
+            return jsonify(manager.get_profile(
+                run_id, frm, to,
+                buckets=min(500, max(1, buckets)),
+                scale_bins=min(60, max(2, scale_bins))))
+        except KeyError as exc:
+            return _err(exc, 404)
+
+    @app.route("/api/runs/<run_id>/profile/toggle", methods=["POST"])
+    def toggle_profile(run_id: str):
+        try:
+            return jsonify(manager.set_profiling(
+                run_id, bool(_json().get("enabled", True))))
+        except KeyError as exc:
+            return _err(exc, 404)
+
+    @app.route("/api/runs/<run_id>/profile/probe", methods=["POST"])
+    def profile_probe(run_id: str):
+        data = _json()
+        try:
+            return jsonify(manager.run_scale_probe(
+                run_id, factors=data.get("scales"),
+                steps=int(data.get("steps", 30))))
+        except KeyError as exc:
+            return _err(exc, 404)
+        except ValueError as exc:
+            return _err(exc, 400)
 
     # ------------------------------------------------------------------ #
     # Experiments (comparison of parameter groups)

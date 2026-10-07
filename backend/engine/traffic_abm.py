@@ -66,25 +66,27 @@ class TrafficABM(Engine):
         sqrt_ab = (a * b) ** 0.5
 
         # --- acceleration (IDM) ---------------------------------------- #
-        for i, v in enumerate(vehicles):
-            ahead = vehicles[(i + 1) % n]
-            gap = (ahead["x"] - v["x"] - self._veh_len) % L
-            if gap < 0:
-                gap += L
-            dv = v["v"] - ahead["v"]
-            s_star = s0 + max(0.0, v["v"] * T + v["v"] * dv / (2 * sqrt_ab))
-            accel = a * (1 - (v["v"] / v0) ** 4 - (s_star / max(gap, 1e-6)) ** 2)
-            v["v"] = max(0.0, v["v"] + accel * dt)
-            v["v"] = min(v["v"], v0)
+        with self._timed("accelerate"):
+            for i, v in enumerate(vehicles):
+                ahead = vehicles[(i + 1) % n]
+                gap = (ahead["x"] - v["x"] - self._veh_len) % L
+                if gap < 0:
+                    gap += L
+                dv = v["v"] - ahead["v"]
+                s_star = s0 + max(0.0, v["v"] * T + v["v"] * dv / (2 * sqrt_ab))
+                accel = a * (1 - (v["v"] / v0) ** 4 - (s_star / max(gap, 1e-6)) ** 2)
+                v["v"] = max(0.0, v["v"] + accel * dt)
+                v["v"] = min(v["v"], v0)
 
         # --- movement + flow detection --------------------------------- #
-        flow = 0
-        for v in vehicles:
-            old = v["x"]
-            v["x"] = (old + v["v"] * dt) % L
-            if v["x"] < old:
-                flow += 1  # crossed the detector at position 0
-            v["state"] = "moving" if v["v"] > 0.5 else "stopped"
+        with self._timed("move"):
+            flow = 0
+            for v in vehicles:
+                old = v["x"]
+                v["x"] = (old + v["v"] * dt) % L
+                if v["x"] < old:
+                    flow += 1  # crossed the detector at position 0
+                v["state"] = "moving" if v["v"] > 0.5 else "stopped"
 
         self._last_flow = flow
         self.step_count += 1

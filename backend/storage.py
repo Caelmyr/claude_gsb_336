@@ -8,6 +8,7 @@ Layout (all under :data:`DATA_DIR`)::
           meta.json                 # run config, status, current step
           series.json               # compact per-step aggregate statistics
           events.json               # applied intervention log
+          profile.json              # per-step × per-phase timing rows
           steps/<nnnnnnnn>.json     # full per-step snapshot (individuals + grid)
           report.json               # generated report
       experiments/<exp_id>.json     # comparison experiments (param groups)
@@ -148,6 +149,10 @@ def run_events_path(run_id: str) -> str:
     return os.path.join(run_dir(run_id), "events.json")
 
 
+def run_profile_path(run_id: str) -> str:
+    return os.path.join(run_dir(run_id), "profile.json")
+
+
 def run_report_path(run_id: str) -> str:
     return os.path.join(run_dir(run_id), "report.json")
 
@@ -244,6 +249,15 @@ def save_events(run_id: str, events: List[Dict[str, Any]]) -> None:
 
 def load_events(run_id: str) -> List[Dict[str, Any]]:
     return read_json(run_events_path(run_id), []) or []
+
+
+def save_profile(run_id: str, profile: Dict[str, Any]) -> None:
+    """Persist the profiling document (calibration meta + per-step rows)."""
+    atomic_write_json(run_profile_path(run_id), profile)
+
+
+def load_profile(run_id: str) -> Optional[Dict[str, Any]]:
+    return read_json(run_profile_path(run_id))
 
 
 def save_report(run_id: str, report: Dict[str, Any]) -> None:

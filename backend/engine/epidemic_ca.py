@@ -81,27 +81,31 @@ class EpidemicCA(Engine):
         gamma = self._base_gamma * self._f_cure
         state = self.state
         days = self.days
-        nxt = [row[:] for row in state]
-        new_inf = 0
-        for y in range(h):
-            for x in range(w):
-                s = state[y][x]
-                if s == 1:
-                    if self._coin(gamma):
-                        nxt[y][x] = 2
-                    else:
-                        days[y][x] += 1
-                elif s == 0:
-                    k = self._infected_neighbors(x, y)
-                    if k > 0 and self._coin(1 - (1 - beta) ** k):
-                        nxt[y][x] = 1
-                        days[y][x] = 0
-                        new_inf += 1
-        self.state = nxt
+        with self._timed("update"):
+            nxt = [row[:] for row in state]
+            new_inf = 0
+            for y in range(h):
+                for x in range(w):
+                    s = state[y][x]
+                    if s == 1:
+                        if self._coin(gamma):
+                            nxt[y][x] = 2
+                        else:
+                            days[y][x] += 1
+                    elif s == 0:
+                        k = self._infected_neighbors(x, y)
+                        if k > 0 and self._coin(1 - (1 - beta) ** k):
+                            nxt[y][x] = 1
+                            days[y][x] = 0
+                            new_inf += 1
+            self.state = nxt
         self._last_new = new_inf
         self.step_count += 1
 
     # ------------------------------------------------------------------ #
+    def population(self) -> int:
+        return self.width * self.height
+
     def individuals(self) -> List[Dict[str, Any]]:
         w, h = self.width, self.height
         out: List[Dict[str, Any]] = []

@@ -79,49 +79,52 @@ class TrafficCA(Engine):
         p_slow = float(self.config["p_slow"])
         lc = bool(self.config["lane_change"])
         vehicles = self._individuals
-        occ = self._occupancy()
+        with self._timed("occupancy"):
+            occ = self._occupancy()
 
         # --- optional lane changing ----------------------------------- #
-        if lc and lanes > 1:
-            for i, v in enumerate(vehicles):
-                lane, pos = v["y"], v["x"]
-                gap = self._gap(occ, lane, pos)
-                if gap >= vmax:
-                    continue  # not blocked, stay put
-                for dl in (1, -1):
-                    nl = lane + dl
-                    if not (0 <= nl < lanes):
-                        continue
-                    if occ[nl][pos] != -1:
-                        continue  # target cell occupied
-                    ahead = self._gap(occ, nl, pos)
-                    behind = self._gap_behind(occ, nl, pos)
-                    if ahead > gap and behind >= 1 and self._coin(0.5):
-                        occ[lane][pos] = -1
-                        occ[nl][pos] = i
-                        v["y"] = nl
-                        break
+        with self._timed("lane_change"):
+            if lc and lanes > 1:
+                for i, v in enumerate(vehicles):
+                    lane, pos = v["y"], v["x"]
+                    gap = self._gap(occ, lane, pos)
+                    if gap >= vmax:
+                        continue  # not blocked, stay put
+                    for dl in (1, -1):
+                        nl = lane + dl
+                        if not (0 <= nl < lanes):
+                            continue
+                        if occ[nl][pos] != -1:
+                            continue  # target cell occupied
+                        ahead = self._gap(occ, nl, pos)
+                        behind = self._gap_behind(occ, nl, pos)
+                        if ahead > gap and behind >= 1 and self._coin(0.5):
+                            occ[lane][pos] = -1
+                            occ[nl][pos] = i
+                            v["y"] = nl
+                            break
 
         # --- NS update, lane by lane, front-to-back -------------------- #
-        flow = 0
-        for lane in range(lanes):
-            idxs = sorted((idx for idx in occ[lane] if idx != -1),
-                          key=lambda i: -vehicles[i]["x"])
-            for i in idxs:
-                v = vehicles[i]
-                pos, vv = v["x"], v["v"]
-                vv = min(vv + 1, self._local_cap(pos))
-                vv = min(vv, self._gap(occ, lane, pos))
-                if vv > 0 and self._coin(p_slow):
-                    vv -= 1
-                v["v"] = vv
-                newpos = (pos + vv) % length
-                if newpos < pos:
-                    flow += 1  # crossed the wrap-around detector
-                occ[lane][pos] = -1
-                occ[lane][newpos] = i
-                v["x"] = newpos
-                v["state"] = "moving" if vv > 0 else "stopped"
+        with self._timed("ns_update"):
+            flow = 0
+            for lane in range(lanes):
+                idxs = sorted((idx for idx in occ[lane] if idx != -1),
+                              key=lambda i: -vehicles[i]["x"])
+                for i in idxs:
+                    v = vehicles[i]
+                    pos, vv = v["x"], v["v"]
+                    vv = min(vv + 1, self._local_cap(pos))
+                    vv = min(vv, self._gap(occ, lane, pos))
+                    if vv > 0 and self._coin(p_slow):
+                        vv -= 1
+                    v["v"] = vv
+                    newpos = (pos + vv) % length
+                    if newpos < pos:
+                        flow += 1  # crossed the wrap-around detector
+                    occ[lane][pos] = -1
+                    occ[lane][newpos] = i
+                    v["x"] = newpos
+                    v["state"] = "moving" if vv > 0 else "stopped"
 
         self._last_flow = flow
         self.step_count += 1
